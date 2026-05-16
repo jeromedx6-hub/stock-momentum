@@ -3,6 +3,7 @@ import base64
 import time as _time
 import threading
 import requests
+import cloudscraper
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
@@ -438,12 +439,11 @@ _COUNTRY_SUFFIX = {
 }
 
 def _ishares_csv(url):
-    """Download iShares ETF holdings CSV and return parsed DataFrame."""
-    hdrs = {**_WIKI_HEADERS, 'Referer': 'https://www.ishares.com'}
-    resp = requests.get(url, headers=hdrs, timeout=30)
+    """Download iShares ETF holdings CSV — utilise cloudscraper pour contourner Cloudflare."""
+    scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False})
+    resp = scraper.get(url, timeout=45)
     resp.raise_for_status()
     lines = resp.text.split('\n')
-    # Find the row that is the CSV header (contains 'Ticker' or 'Name')
     start = next(
         (i for i, l in enumerate(lines)
          if l.split(',')[0].strip().strip('"').lower() in ('ticker', 'name', 'isin')),
