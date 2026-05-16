@@ -456,29 +456,30 @@ def _ishares_csv(url):
     return df
 
 def _iwm_russell2000():
-    url = (
-        "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf/"
-        "1467271812596.ajax?fileType=csv&fileName=IWM_holdings&dataType=fund"
-    )
-    df = _ishares_csv(url)
-    tc = next((c for c in df.columns if c.lower() == 'ticker'), None)
-    nc = next((c for c in df.columns if c.lower() == 'name'), None)
-    sc = next((c for c in df.columns if 'sector' in c.lower()), None)
-    ac = next((c for c in df.columns if 'asset' in c.lower() and 'class' in c.lower()), None)
-    if not tc:
-        raise ValueError("Colonne Ticker introuvable dans le CSV IWM")
-    if ac:
-        df = df[df[ac].astype(str).str.strip() == 'Equity']
+    """Russell 2000 via Vanguard VTWO ETF API (iShares bloqué en datacenter)."""
+    base = "https://investor.vanguard.com/investment-products/etfs/profile/api/vtwo/portfolio-holding/stock"
+    hdrs = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+        "Accept": "application/json",
+    }
     result = []
-    for _, row in df.iterrows():
-        t = str(row[tc]).strip()
-        if not t or t in ('-', 'nan', ''):
-            continue
-        result.append((
-            t,
-            str(row[nc]).strip() if nc else t,
-            str(row[sc]).strip() if sc else '',
-        ))
+    page = 1
+    while True:
+        r = requests.get(base, headers=hdrs, params={"sortBy": "weighting", "sortOrder": "desc", "perPage": 500, "page": page}, timeout=30)
+        r.raise_for_status()
+        entities = r.json().get("fund", {}).get("entity", [])
+        if not entities:
+            break
+        for e in entities:
+            t = str(e.get("ticker", "")).strip()
+            if not t or t in ("-", "nan", ""):
+                continue
+            result.append((t, str(e.get("longName", t)).strip(), ""))
+        if len(entities) < 500:
+            break
+        page += 1
+    if not result:
+        raise ValueError("Aucun composant récupéré depuis Vanguard VTWO")
     return result
 
 def _wiki_stoxx600():
