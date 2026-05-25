@@ -1,9 +1,12 @@
 import io
 import base64
 import time as _time
+import os
 import threading
 import requests
 import cloudscraper
+import psycopg2
+import psycopg2.extras
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
@@ -258,6 +261,46 @@ def analyze():
 
 _mom_cache = {}
 _qs_lock   = threading.Lock()   # sérialise les downloads /quick-stats
+
+# ── Supabase / PostgreSQL cache persistant ────────────────────────────────────
+_DATABASE_URL = os.environ.get("DATABASE_URL")
+
+def _db_get(table, key_col, key_val, ttl_seconds):
+    """Lit le cache DB. Retourne le dict data ou None si absent/expiré."""
+    if not _DATABASE_URL:
+        return None
+    try:
+        conn = psycopg2.connect(_DATABASE_URL)
+        cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(f"SELECT data, computed_at FROM {table} WHERE {key_col} = %s", (key_val,))
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            age = _time.time() - row["computed_at"].timestamp()
+            if age < ttl_seconds:
+                return dict(row["data"])
+    except Exception as e:
+        print(f"[DB GET] {table}/{key_val}: {e}")
+    return None
+
+def _db_set(table, key_col, key_val, data):
+    """Écrit dans le cache DB (upsert)."""
+    if not _DATABASE_URL:
+        return
+    try:
+        conn = psycopg2.connect(_DATABASE_URL)
+        cur  = conn.cursor()
+        cur.execute(
+            f"""INSERT INTO {table} ({key_col}, data, computed_at)
+                VALUES (%s, %s, NOW())
+                ON CONFLICT ({key_col}) DO UPDATE
+                SET data = EXCLUDED.data, computed_at = NOW()""",
+            (key_val, psycopg2.extras.Json(data))
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[DB SET] {table}/{key_val}: {e}")
 _rank_hist_cache = {}
 CACHE_TTL       = 4  * 3600   # 4h  — petits indices
 CACHE_TTL_LARGE = 24 * 3600   # 24h — Russell 2000 / STOXX 600
@@ -559,10 +602,19 @@ def momentum():
     # Cache (24h pour les grands indices, 4h pour les autres)
     ttl = CACHE_TTL_LARGE if index_name in _LARGE_INDICES else CACHE_TTL
     now = _time.time()
+
+    # L1 : cache mémoire
     if not force and index_name in _mom_cache:
         ts, data = _mom_cache[index_name]
         if now - ts < ttl:
             return jsonify(data)
+
+    # L2 : cache Supabase (survit aux redémarrages)
+    if not force:
+        db_data = _db_get("momentum_cache", "index_name", index_name, ttl)
+        if db_data:
+            _mom_cache[index_name] = (_time.time(), db_data)
+            return jsonify(db_data)
 
     try:
         components = _get_components(index_name)
@@ -654,6 +706,7 @@ def momentum():
             'stocks': results,
         }
         _mom_cache[index_name] = (now, payload)
+        _db_set("momentum_cache", "index_name", index_name, payload)
         return jsonify(payload)
 
     except Exception as e:
@@ -847,11 +900,17 @@ def quick_stats():
     cache_key = f"qs_{ticker}"
     now = _time.time()
 
-    # Lecture rapide hors lock
+    # L1 : mémoire
     if cache_key in _mom_cache:
         ts, data = _mom_cache[cache_key]
         if now - ts < 3600:
             return jsonify(data)
+
+    # L2 : Supabase
+    db_data = _db_get("quick_stats_cache", "ticker", ticker, 3600)
+    if db_data:
+        _mom_cache[cache_key] = (_time.time(), db_data)
+        return jsonify(db_data)
 
     with _qs_lock:
         # Double-check après acquisition du lock
@@ -908,6 +967,7 @@ def quick_stats():
                 "n_years":         round((dates[-1] - dates[0]).days / 365.25, 1),
             }
             _mom_cache[cache_key] = (_time.time(), result)
+            _db_set("quick_stats_cache", "ticker", ticker, result)
             return jsonify(result)
 
         except Exception as e:
