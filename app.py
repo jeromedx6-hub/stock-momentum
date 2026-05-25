@@ -270,7 +270,7 @@ def _db_get(table, key_col, key_val, ttl_seconds):
     if not _DATABASE_URL:
         return None
     try:
-        conn = psycopg2.connect(_DATABASE_URL)
+        conn = psycopg2.connect(_DATABASE_URL, connect_timeout=5)
         cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(f"SELECT data, computed_at FROM {table} WHERE {key_col} = %s", (key_val,))
         row = cur.fetchone()
@@ -288,7 +288,7 @@ def _db_set(table, key_col, key_val, data):
     if not _DATABASE_URL:
         return
     try:
-        conn = psycopg2.connect(_DATABASE_URL)
+        conn = psycopg2.connect(_DATABASE_URL, connect_timeout=5)
         cur  = conn.cursor()
         cur.execute(
             f"""INSERT INTO {table} ({key_col}, data, computed_at)
@@ -1008,13 +1008,6 @@ def debug_russell():
         result["vanguard_body_start"] = r.text[:100]
     except Exception as e:
         result["vanguard_error"] = str(e)
-    # 4. Test _get_components path
-    try:
-        comps = _get_components("russell2000")
-        result["components_count"] = len(comps)
-        result["first_ticker"] = comps[0][0] if comps else None
-    except Exception as e:
-        result["components_error"] = str(e)
     return jsonify(result)
 
 @app.route("/")
