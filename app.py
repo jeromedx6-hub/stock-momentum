@@ -585,7 +585,11 @@ def momentum():
 
         # ── Market cap (parallel fetch) ──────────────────────────────────
         valid_tickers = [t for t in tickers_list if t in close_df.columns]
-        mktcap_map = _fetch_market_caps(valid_tickers)
+        # Pour les grands indices (>600 tickers), skip market cap — trop lent en prod
+        if len(valid_tickers) > 600:
+            mktcap_map = {}
+        else:
+            mktcap_map = _fetch_market_caps(valid_tickers)
 
         # ── Per-ticker calculations ───────────────────────────────────────
         results = []
