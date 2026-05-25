@@ -974,6 +974,10 @@ def quick_stats():
             return jsonify({"error": str(e)}), 500
 
 
+@app.route("/version")
+def version():
+    return {"version": "2.0-vanguard-supabase", "russell2000_source": "vanguard_vtwo"}
+
 @app.route("/")
 def index():
     return render_template("index.html")
