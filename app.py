@@ -963,6 +963,28 @@ def quick_stats():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/debug-download")
+def debug_download():
+    """Diagnostique la structure de yf.download multi-tickers sur Railway."""
+    tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META']
+    try:
+        raw = yf.download(tickers, period="5d", auto_adjust=True, progress=False)
+        info = {
+            "shape": list(raw.shape),
+            "empty": raw.empty,
+            "columns_type": str(type(raw.columns).__name__),
+            "columns_sample": str(raw.columns.tolist()[:10]),
+            "has_Close_key": "Close" in raw.columns,
+        }
+        if not raw.empty and "Close" in raw.columns:
+            close = raw["Close"]
+            info["close_type"] = str(type(close).__name__)
+            info["close_cols"] = str(list(close.columns)[:5]) if hasattr(close, 'columns') else "Series"
+        return jsonify(info)
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
 @app.route("/version")
 def version():
     return {"version": "2.0-vanguard-supabase", "russell2000_source": "vanguard_vtwo"}
