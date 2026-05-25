@@ -509,8 +509,11 @@ def _iwm_russell2000():
     page = 1
     while True:
         r = requests.get(base, headers=hdrs, params={"sortBy": "weighting", "sortOrder": "desc", "perPage": 500, "page": page}, timeout=30)
+        print(f"[VANGUARD] page={page} status={r.status_code} content_type={r.headers.get('Content-Type','?')} body_start={r.text[:80]!r}")
         r.raise_for_status()
-        entities = r.json().get("fund", {}).get("entity", [])
+        data = r.json()
+        entities = data.get("fund", {}).get("entity", [])
+        print(f"[VANGUARD] page={page} entities={len(entities)}")
         if not entities:
             break
         for e in entities:
