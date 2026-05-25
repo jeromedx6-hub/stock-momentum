@@ -899,66 +899,56 @@ def quick_stats():
         _mom_cache[cache_key] = (_time.time(), db_data)
         return jsonify(db_data)
 
-    with _qs_lock:
-        # Double-check après acquisition du lock
-        now = _time.time()
-        if cache_key in _mom_cache:
-            ts, data = _mom_cache[cache_key]
-            if now - ts < 3600:
-                return jsonify(data)
+    try:
+        # yf.download fonctionne en datacenter (crumb géré automatiquement)
+        raw = yf.download(ticker, period="10y", auto_adjust=True, progress=False)
+        if raw.empty:
+            return jsonify({"error": "Aucune donnée"}), 400
 
-        try:
-            start_10y = (datetime.now() - timedelta(days=10*365)).strftime("%Y-%m-%d")
-            # yf.Ticker().history() est isolé par instance — évite le shared-state de yf.download
-            t_obj  = yf.Ticker(ticker)
-            raw    = t_obj.history(start=start_10y, auto_adjust=True)
-            if raw.empty:
-                return jsonify({"error": "Aucune donnée"}), 400
+        close = raw["Close"] if "Close" in raw.columns else raw.iloc[:, 0]
+        # Aplatir si MultiIndex colonnes (yfinance peut retourner DataFrame à 2 col)
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0]
+        series = close.dropna()
+        if len(series) < 60:
+            return jsonify({"error": "Historique insuffisant"}), 400
 
-            close = raw["Close"]
-            # Aplatir si MultiIndex colonnes (yfinance peut retourner DataFrame à 2 col)
-            if isinstance(close, pd.DataFrame):
-                close = close.iloc[:, 0]
-            series = close.dropna()
-            if len(series) < 60:
-                return jsonify({"error": "Historique insuffisant"}), 400
+        prices = np.array(series.values, dtype=float).flatten()
+        dates  = series.index
 
-            prices = np.array(series.values, dtype=float).flatten()
-            dates  = series.index
+        x = np.array([(d - dates[0]).days for d in dates], dtype=float)
+        y = np.log(prices)
 
-            x = np.array([(d - dates[0]).days for d in dates], dtype=float)
-            y = np.log(prices)
+        slope, intercept, r_value, _, _ = stats.linregress(x, y)
+        y_fit    = slope * x + intercept
+        sigma    = (y - y_fit).std()
 
-            slope, intercept, r_value, _, _ = stats.linregress(x, y)
-            y_fit    = slope * x + intercept
-            sigma    = (y - y_fit).std()
+        annual_return   = (np.exp(slope * 365) - 1) * 100
+        last_price      = float(prices[-1])
+        sigma_pct       = (np.exp(sigma) - 1) * 100
+        sigma_dollars   = last_price * (np.exp(sigma) - 1)
 
-            annual_return   = (np.exp(slope * 365) - 1) * 100
-            last_price      = float(prices[-1])
-            sigma_pct       = (np.exp(sigma) - 1) * 100
-            sigma_dollars   = last_price * (np.exp(sigma) - 1)
+        last_reg_log    = slope * x[-1] + intercept
+        deviation_sigma = (np.log(last_price) - last_reg_log) / sigma
+        deviation_pct   = (last_price / np.exp(last_reg_log) - 1) * 100
 
-            last_reg_log    = slope * x[-1] + intercept
-            deviation_sigma = (np.log(last_price) - last_reg_log) / sigma
-            deviation_pct   = (last_price / np.exp(last_reg_log) - 1) * 100
+        result = {
+            "ticker":          ticker,
+            "annual_return":   round(annual_return, 2),
+            "sigma_pct":       round(sigma_pct, 2),
+            "sigma_dollars":   round(sigma_dollars, 2),
+            "deviation_sigma": round(deviation_sigma, 2),
+            "deviation_pct":   round(deviation_pct, 2),
+            "r2":              round(r_value ** 2, 4),
+            "data_start":      dates[0].strftime("%d/%m/%Y"),
+            "n_years":         round((dates[-1] - dates[0]).days / 365.25, 1),
+        }
+        _mom_cache[cache_key] = (_time.time(), result)
+        _db_set("quick_stats_cache", "ticker", ticker, result)
+        return jsonify(result)
 
-            result = {
-                "ticker":          ticker,
-                "annual_return":   round(annual_return, 2),
-                "sigma_pct":       round(sigma_pct, 2),
-                "sigma_dollars":   round(sigma_dollars, 2),
-                "deviation_sigma": round(deviation_sigma, 2),
-                "deviation_pct":   round(deviation_pct, 2),
-                "r2":              round(r_value ** 2, 4),
-                "data_start":      dates[0].strftime("%d/%m/%Y"),
-                "n_years":         round((dates[-1] - dates[0]).days / 365.25, 1),
-            }
-            _mom_cache[cache_key] = (_time.time(), result)
-            _db_set("quick_stats_cache", "ticker", ticker, result)
-            return jsonify(result)
-
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/version")
