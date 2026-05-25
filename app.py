@@ -481,22 +481,6 @@ _COUNTRY_SUFFIX = {
     'Poland':           '.WA',
 }
 
-def _ishares_csv(url):
-    """Download iShares ETF holdings CSV — utilise cloudscraper pour contourner Cloudflare."""
-    scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False})
-    resp = scraper.get(url, timeout=45)
-    resp.raise_for_status()
-    lines = resp.text.split('\n')
-    start = next(
-        (i for i, l in enumerate(lines)
-         if l.split(',')[0].strip().strip('"').lower() in ('ticker', 'name', 'isin')),
-        None
-    )
-    if start is None:
-        raise ValueError("Impossible de parser le CSV iShares")
-    df = pd.read_csv(io.StringIO('\n'.join(lines[start:])), on_bad_lines='skip')
-    df.columns = [c.strip().strip('"') for c in df.columns]
-    return df
 
 def _iwm_russell2000():
     """Russell 2000 via Vanguard VTWO ETF API (iShares bloqué en datacenter)."""
