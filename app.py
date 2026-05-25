@@ -981,6 +981,42 @@ def quick_stats():
 def version():
     return {"version": "2.0-vanguard-supabase", "russell2000_source": "vanguard_vtwo"}
 
+@app.route("/debug-russell")
+def debug_russell():
+    import sys
+    result = {}
+    # 1. Check memory cache
+    result["in_memory"] = "russell2000" in _mom_cache
+    # 2. Check DB cache
+    try:
+        db = _db_get("momentum_cache", "index_name", "russell2000", 999999)
+        result["in_db"] = db is not None
+        if db:
+            result["db_keys"] = list(db.keys())[:5]
+    except Exception as e:
+        result["db_error"] = str(e)
+    # 3. Test Vanguard API
+    try:
+        r = requests.get(
+            "https://investor.vanguard.com/investment-products/etfs/profile/api/vtwo/portfolio-holding/stock",
+            headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+            params={"sortBy": "weighting", "sortOrder": "desc", "perPage": 5, "page": 1},
+            timeout=15
+        )
+        result["vanguard_status"] = r.status_code
+        result["vanguard_content_type"] = r.headers.get("Content-Type", "?")
+        result["vanguard_body_start"] = r.text[:100]
+    except Exception as e:
+        result["vanguard_error"] = str(e)
+    # 4. Test _get_components path
+    try:
+        comps = _get_components("russell2000")
+        result["components_count"] = len(comps)
+        result["first_ticker"] = comps[0][0] if comps else None
+    except Exception as e:
+        result["components_error"] = str(e)
+    return jsonify(result)
+
 @app.route("/")
 def index():
     return render_template("index.html")
