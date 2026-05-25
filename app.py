@@ -865,14 +865,15 @@ def quick_stats():
             if raw.empty:
                 return jsonify({"error": "Aucune donnée"}), 400
 
-            series = raw["Close"].dropna()
-            if isinstance(series, pd.DataFrame):
-                series = series.iloc[:, 0]
-            series = series.dropna()
+            close = raw["Close"]
+            # Aplatir si MultiIndex colonnes (yfinance peut retourner DataFrame à 2 col)
+            if isinstance(close, pd.DataFrame):
+                close = close.iloc[:, 0]
+            series = close.dropna()
             if len(series) < 60:
                 return jsonify({"error": "Historique insuffisant"}), 400
 
-            prices = series.values.flatten().astype(float)
+            prices = np.array(series.values, dtype=float).flatten()
             dates  = series.index
 
             x = np.array([(d - dates[0]).days for d in dates], dtype=float)
