@@ -616,22 +616,32 @@ def momentum():
     sector_map   = {c[0]: c[2] for c in components}
 
     try:
-        # Batch downloads par tranches de 100 (évite timeout / rate-limit Yahoo sur grands lots)
-        BATCH_SIZE = 100
+        # ── Download par batchs parallèles (évite timeout gunicorn) ────────
+        BATCH_SIZE = 50   # 50 tickers/batch = rapide, peu de risque rate-limit
+        MAX_WORKERS = 5   # 5 downloads simultanés
+
+        def _download_chunk(chunk):
+            try:
+                raw = yf.download(chunk, period="2y", auto_adjust=True, progress=False)
+                if raw.empty:
+                    print(f"[BATCH] vide: {chunk[:2]}")
+                    return None
+                close = raw["Close"] if len(chunk) > 1 else raw[["Close"]].rename(columns={"Close": chunk[0]})
+                return close if not close.empty else None
+            except Exception as e:
+                print(f"[BATCH] erreur: {e}")
+                return None
+
         chunks = [tickers_list[i:i+BATCH_SIZE] for i in range(0, len(tickers_list), BATCH_SIZE)]
         frames = []
-        for chunk in chunks:
-            try:
-                chunk_raw = yf.download(chunk, period="2y", auto_adjust=True, progress=False)
-                if chunk_raw.empty:
-                    print(f"[BATCH] chunk vide pour {chunk[:3]}...")
-                    continue
-                chunk_close = chunk_raw["Close"] if len(chunk) > 1 else chunk_raw[["Close"]].rename(columns={"Close": chunk[0]})
-                if not chunk_close.empty:
-                    frames.append(chunk_close)
-            except Exception as chunk_err:
-                print(f"[BATCH] chunk error: {chunk_err}")
-                continue
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+            futures = {ex.submit(_download_chunk, chunk): chunk for chunk in chunks}
+            for fut in as_completed(futures):
+                result = fut.result()
+                if result is not None:
+                    frames.append(result)
+
+        print(f"[MOMENTUM] {index_name}: {len(frames)}/{len(chunks)} chunks OK")
         close_df = pd.concat(frames, axis=1) if frames else pd.DataFrame()
 
         # ── Market cap (parallel fetch) ──────────────────────────────────
