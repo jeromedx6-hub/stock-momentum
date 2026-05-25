@@ -616,23 +616,23 @@ def momentum():
     sector_map   = {c[0]: c[2] for c in components}
 
     try:
-        # Batch downloads pour les grands indices (évite timeout sur 2000 tickers)
-        BATCH_SIZE = 500
-        if len(tickers_list) > BATCH_SIZE:
-            chunks = [tickers_list[i:i+BATCH_SIZE] for i in range(0, len(tickers_list), BATCH_SIZE)]
-            frames = []
-            for chunk in chunks:
-                try:
-                    chunk_raw = yf.download(chunk, period="2y", auto_adjust=True, progress=False)
-                    chunk_close = chunk_raw["Close"] if len(chunk) > 1 else chunk_raw[["Close"]].rename(columns={"Close": chunk[0]})
-                    frames.append(chunk_close)
-                except Exception as chunk_err:
-                    print(f"[BATCH] chunk error: {chunk_err}")
+        # Batch downloads par tranches de 100 (évite timeout / rate-limit Yahoo sur grands lots)
+        BATCH_SIZE = 100
+        chunks = [tickers_list[i:i+BATCH_SIZE] for i in range(0, len(tickers_list), BATCH_SIZE)]
+        frames = []
+        for chunk in chunks:
+            try:
+                chunk_raw = yf.download(chunk, period="2y", auto_adjust=True, progress=False)
+                if chunk_raw.empty:
+                    print(f"[BATCH] chunk vide pour {chunk[:3]}...")
                     continue
-            close_df = pd.concat(frames, axis=1) if frames else pd.DataFrame()
-        else:
-            raw = yf.download(tickers_list, period="2y", auto_adjust=True, progress=False)
-            close_df = raw["Close"] if len(tickers_list) > 1 else raw[["Close"]].rename(columns={"Close": tickers_list[0]})
+                chunk_close = chunk_raw["Close"] if len(chunk) > 1 else chunk_raw[["Close"]].rename(columns={"Close": chunk[0]})
+                if not chunk_close.empty:
+                    frames.append(chunk_close)
+            except Exception as chunk_err:
+                print(f"[BATCH] chunk error: {chunk_err}")
+                continue
+        close_df = pd.concat(frames, axis=1) if frames else pd.DataFrame()
 
         # ── Market cap (parallel fetch) ──────────────────────────────────
         valid_tickers = [t for t in tickers_list if t in close_df.columns]
